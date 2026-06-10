@@ -13,6 +13,7 @@ jobs:
         with:
           script: |
             const sha = context.sha;
+            console.log(`Current SHA: ${sha}`);
             const runs =
               await github.rest.actions.listWorkflowRunsForRepo({
                 owner: context.repo.owner,
