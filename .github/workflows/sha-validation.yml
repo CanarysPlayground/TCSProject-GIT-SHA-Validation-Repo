@@ -174,21 +174,23 @@ jobs:
       - run: echo "Package already succeeded for this SHA"
 
   deploy:
-    needs: package
-    if: always() && needs.check-jobs.outputs.skip_deploy != 'true'
+    needs: [check-jobs, package]
     runs-on: ubuntu-latest
 
     steps:
       - name: Deploy
+        if: needs.check-jobs.outputs.skip_deploy != 'true'
         run: |
           echo "Deploying Application"
-          sleep 10 	
+
+          if [ "${{ github.event.inputs.fail_deploy }}" = "true" ]; then
+            echo "Simulating deployment failure"
+            exit 1
+          fi
+
           echo "Deploy Success"
 
-  deploy-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_deploy == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Deploy already succeeded for this SHA"
+      - name: Deploy Skipped
+        if: needs.check-jobs.outputs.skip_deploy == 'true'
+        run: |
+          echo "Deploy already succeeded for this SHA"
