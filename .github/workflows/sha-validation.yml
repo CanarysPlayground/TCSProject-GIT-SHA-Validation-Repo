@@ -16,13 +16,11 @@ jobs:
 
   check-jobs:
     runs-on: ubuntu-latest
-
     outputs:
       skip_build: ${{ steps.check.outputs.skip_build }}
       skip_sonar: ${{ steps.check.outputs.skip_sonar }}
       skip_security: ${{ steps.check.outputs.skip_security }}
       skip_package: ${{ steps.check.outputs.skip_package }}
-
     steps:
       - name: Check Previous Job Status
         id: check
@@ -30,140 +28,88 @@ jobs:
         with:
           script: |
             const sha = context.sha;
-
             console.log(`Current SHA: ${sha}`);
 
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: sha,
-              }
+              { owner: context.repo.owner, repo: context.repo.repo, head_sha: sha }
             );
 
-            let buildSucceeded = false;
-            let sonarSucceeded = false;
-            let securitySucceeded = false;
-            let packageSucceeded = false;
+            const ok = { build: false, sonar: false, security: false, package: false };
 
             for (const run of runs) {
-
               if (run.id === context.runId) continue;
               if (run.name !== 'SHA Validation') continue;
 
-              const response =
-                await github.rest.actions.listJobsForWorkflowRun({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: run.id,
-                });
+              const jobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                { owner: context.repo.owner, repo: context.repo.repo, run_id: run.id }
+              );
 
-              const jobs = response.data.jobs;
-
-              if (jobs.some(j => j.name === 'build' && j.conclusion === 'success'))
-                buildSucceeded = true;
-
-              if (jobs.some(j => j.name === 'sonar' && j.conclusion === 'success'))
-                sonarSucceeded = true;
-
-              if (jobs.some(j => j.name === 'security' && j.conclusion === 'success'))
-                securitySucceeded = true;
-
-              if (jobs.some(j => j.name === 'package' && j.conclusion === 'success'))
-                packageSucceeded = true;
+              for (const name of Object.keys(ok)) {
+                if (jobs.some(j => j.name === name && j.conclusion === 'success')) ok[name] = true;
+              }
             }
 
-            console.log(`Build Success: ${buildSucceeded}`);
-            console.log(`Sonar Success: ${sonarSucceeded}`);
-            console.log(`Security Success: ${securitySucceeded}`);
-            console.log(`Package Success: ${packageSucceeded}`);
-
-            core.setOutput('skip_build', buildSucceeded ? 'true' : 'false');
-            core.setOutput('skip_sonar', sonarSucceeded ? 'true' : 'false');
-            core.setOutput('skip_security', securitySucceeded ? 'true' : 'false');
-            core.setOutput('skip_package', packageSucceeded ? 'true' : 'false');
+            for (const [name, done] of Object.entries(ok)) {
+              console.log(`${name} previously succeeded: ${done}`);
+              core.setOutput(`skip_${name}`, done ? 'true' : 'false');
+            }
 
   build:
     needs: check-jobs
+    if: ${{ needs.check-jobs.outputs.skip_build != 'true' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Build
-        if: needs.check-jobs.outputs.skip_build != 'true'
         run: |
           echo "Running Build"
           sleep 10
           echo "Build Success"
 
-      - name: Build Already Completed
-        if: needs.check-jobs.outputs.skip_build == 'true'
-        run: |
-          echo "Build already completed for this SHA"
-
   sonar:
     needs: [check-jobs, build]
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.check-jobs.outputs.skip_sonar != 'true' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Sonar Scan
-        if: needs.check-jobs.outputs.skip_sonar != 'true'
         run: |
           echo "Running Sonar Scan"
           sleep 10
           echo "Sonar Success"
 
-      - name: Sonar Already Completed
-        if: needs.check-jobs.outputs.skip_sonar == 'true'
-        run: |
-          echo "Sonar already completed for this SHA"
-
   security:
     needs: [check-jobs, sonar]
+    if: ${{ !cancelled() && needs.sonar.result != 'failure' && needs.check-jobs.outputs.skip_security != 'true' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Security Scan
-        if: needs.check-jobs.outputs.skip_security != 'true'
         run: |
           echo "Running Security Scan"
           sleep 10
           echo "Security Success"
 
-      - name: Security Already Completed
-        if: needs.check-jobs.outputs.skip_security == 'true'
-        run: |
-          echo "Security already completed for this SHA"
-
   package:
     needs: [check-jobs, security]
+    if: ${{ !cancelled() && needs.security.result != 'failure' && needs.check-jobs.outputs.skip_package != 'true' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Package
-        if: needs.check-jobs.outputs.skip_package != 'true'
         run: |
           echo "Packaging Application"
           sleep 10
           echo "Package Success"
 
-      - name: Package Already Completed
-        if: needs.check-jobs.outputs.skip_package == 'true'
-        run: |
-          echo "Package already completed for this SHA"
-
   deploy:
-    needs: [check-jobs, package]
+    needs: [check-jobs, build, sonar, security, package]
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Deploy
         run: |
           echo "Deploying Application"
-
           if [ "${{ github.event.inputs.fail_deploy }}" = "true" ]; then
             echo "Simulating deployment failure"
             exit 1
           fi
-
           echo "Deploy Success"
