@@ -29,7 +29,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-
             const sha = context.sha;
 
             console.log(`Current SHA: ${sha}`);
@@ -97,10 +96,10 @@ jobs:
           sleep 10
           echo "Build Success"
 
-      - name: Build Skipped
+      - name: Build Already Completed
         if: needs.check-jobs.outputs.skip_build == 'true'
         run: |
-          echo "Build already succeeded for this SHA"
+          echo "Build already completed for this SHA"
 
   sonar:
     needs: [check-jobs, build]
@@ -114,10 +113,10 @@ jobs:
           sleep 10
           echo "Sonar Success"
 
-      - name: Sonar Skipped
+      - name: Sonar Already Completed
         if: needs.check-jobs.outputs.skip_sonar == 'true'
         run: |
-          echo "Sonar already succeeded for this SHA"
+          echo "Sonar already completed for this SHA"
 
   security:
     needs: [check-jobs, sonar]
@@ -131,10 +130,10 @@ jobs:
           sleep 10
           echo "Security Success"
 
-      - name: Security Skipped
+      - name: Security Already Completed
         if: needs.check-jobs.outputs.skip_security == 'true'
         run: |
-          echo "Security already succeeded for this SHA"
+          echo "Security already completed for this SHA"
 
   package:
     needs: [check-jobs, security]
@@ -148,13 +147,13 @@ jobs:
           sleep 10
           echo "Package Success"
 
-      - name: Package Skipped
+      - name: Package Already Completed
         if: needs.check-jobs.outputs.skip_package == 'true'
         run: |
-          echo "Package already succeeded for this SHA"
+          echo "Package already completed for this SHA"
 
   deploy:
-    needs: check-jobs
+    needs: [check-jobs, package]
     runs-on: ubuntu-latest
 
     steps:
