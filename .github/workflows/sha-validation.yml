@@ -30,6 +30,7 @@ jobs:
             const sha = context.sha;
             console.log(`Current SHA: ${sha}`);
 
+            // Only runs on THIS exact commit are returned
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
               { owner: context.repo.owner, repo: context.repo.repo, head_sha: sha }
@@ -38,8 +39,9 @@ jobs:
             const ok = { build: false, sonar: false, security: false, package: false };
 
             for (const run of runs) {
-              if (run.id === context.runId) continue;
-              if (run.name !== 'SHA Validation') continue;
+              if (run.id === context.runId) continue;     // skip the current run
+              if (run.head_sha !== sha) continue;          // same commit only (explicit guard)
+              if (run.name !== 'SHA Validation') continue; // same workflow only
 
               const jobs = await github.paginate(
                 github.rest.actions.listJobsForWorkflowRun,
