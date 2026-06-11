@@ -2,6 +2,15 @@ name: SHA Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      fail_deploy:
+        description: "Simulate Deploy Failure"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
 
@@ -19,7 +28,6 @@ jobs:
       - name: Check Previous Job Status
         id: check
         uses: actions/github-script@v7
-
         with:
           script: |
 
@@ -86,105 +94,90 @@ jobs:
 
   build:
     needs: check-jobs
-    if: needs.check-jobs.outputs.skip_build != 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Build
+        if: needs.check-jobs.outputs.skip_build != 'true'
         run: |
           echo "Running Build"
           sleep 10
           echo "Build Success"
 
-  build-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_build == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Build already succeeded for this SHA"
+      - name: Build Skipped
+        if: needs.check-jobs.outputs.skip_build == 'true'
+        run: |
+          echo "Build already succeeded for this SHA"
 
   sonar:
-    needs: build
-    if: always() && needs.check-jobs.outputs.skip_sonar != 'true'
+    needs: [check-jobs, build]
     runs-on: ubuntu-latest
 
     steps:
-      - name: Sonar
+      - name: Sonar Scan
+        if: needs.check-jobs.outputs.skip_sonar != 'true'
         run: |
           echo "Running Sonar Scan"
           sleep 10
           echo "Sonar Success"
-          exit 1
 
-  sonar-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_sonar == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Sonar already succeeded for this SHA"
+      - name: Sonar Skipped
+        if: needs.check-jobs.outputs.skip_sonar == 'true'
+        run: |
+          echo "Sonar already succeeded for this SHA"
 
   security:
-    needs: sonar
-    if: always() && needs.check-jobs.outputs.skip_security != 'true'
+    needs: [check-jobs, sonar]
     runs-on: ubuntu-latest
 
     steps:
       - name: Security Scan
+        if: needs.check-jobs.outputs.skip_security != 'true'
         run: |
           echo "Running Security Scan"
           sleep 10
           echo "Security Success"
 
-  security-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_security == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Security already succeeded for this SHA"
+      - name: Security Skipped
+        if: needs.check-jobs.outputs.skip_security == 'true'
+        run: |
+          echo "Security already succeeded for this SHA"
 
   package:
-    needs: security
-    if: always() && needs.check-jobs.outputs.skip_package != 'true'
+    needs: [check-jobs, security]
     runs-on: ubuntu-latest
 
     steps:
       - name: Package
+        if: needs.check-jobs.outputs.skip_package != 'true'
         run: |
           echo "Packaging Application"
           sleep 10
           echo "Package Success"
 
-  package-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_package == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Package already succeeded for this SHA"
+      - name: Package Skipped
+        if: needs.check-jobs.outputs.skip_package == 'true'
+        run: |
+          echo "Package already succeeded for this SHA"
 
   deploy:
-    needs: package
-    if: always() && needs.check-jobs.outputs.skip_deploy != 'true'
+    needs: [check-jobs, package]
     runs-on: ubuntu-latest
 
     steps:
       - name: Deploy
+        if: needs.check-jobs.outputs.skip_deploy != 'true'
         run: |
           echo "Deploying Application"
-          sleep 10
 
-          # Uncomment next line to simulate failure
-          exit 1
+          if [ "${{ github.event.inputs.fail_deploy }}" = "true" ]; then
+            echo "Simulating deployment failure"
+            exit 1
+          fi
 
           echo "Deploy Success"
 
-  deploy-skipped:
-    needs: check-jobs
-    if: needs.check-jobs.outputs.skip_deploy == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - run: echo "Deploy already succeeded for this SHA"
+      - name: Deploy Skipped
+        if: needs.check-jobs.outputs.skip_deploy == 'true'
+        run: |
+          echo "Deploy already succeeded for this SHA"
