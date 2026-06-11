@@ -42,13 +42,12 @@ jobs:
               run.name === 'SHA Validation'
             );
 
-            console.log(`Previous runs for this SHA: ${previous.length}`);
-
             const ok = { build: false, sonar: false, security: false, package: false };
 
             if (previous.length === 0) {
-              console.log('No previous runs for this SHA - all jobs will run, skipping status check.');
+              console.log('No previous runs for this SHA - all jobs will run.');
             } else {
+              console.log(`Previous runs for this SHA: ${previous.length}`);
               for (const run of previous) {
                 const jobs = await github.paginate(
                   github.rest.actions.listJobsForWorkflowRun,
@@ -58,10 +57,14 @@ jobs:
                   if (jobs.some(j => j.name === name && j.conclusion === 'success')) ok[name] = true;
                 }
               }
+              // log status only when there are previous runs on the same SHA
+              for (const [name, done] of Object.entries(ok)) {
+                console.log(`${name} previously succeeded: ${done}`);
+              }
             }
 
+            // outputs must always be set, regardless of SHA
             for (const [name, done] of Object.entries(ok)) {
-              console.log(`${name} previously succeeded: ${done}`);
               core.setOutput(`skip_${name}`, done ? 'true' : 'false');
             }
 
