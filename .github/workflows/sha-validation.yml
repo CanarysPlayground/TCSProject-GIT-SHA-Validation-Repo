@@ -115,6 +115,7 @@ jobs:
           echo "Running Sonar Scan"
           sleep 10
           echo "Sonar Success"
+          exit 1
 
   sonar-skipped:
     needs: check-jobs
@@ -176,7 +177,7 @@ jobs:
           sleep 10
 
           # Uncomment next line to simulate failure
-          # exit 1
+          exit 1
 
           echo "Deploy Success"
 
