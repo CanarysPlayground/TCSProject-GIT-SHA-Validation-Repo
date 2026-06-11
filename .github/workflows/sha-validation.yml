@@ -21,6 +21,7 @@ jobs:
       skip_sonar: ${{ steps.check.outputs.skip_sonar }}
       skip_security: ${{ steps.check.outputs.skip_security }}
       skip_package: ${{ steps.check.outputs.skip_package }}
+      skip_deploy: ${{ steps.check.outputs.skip_deploy }}
     steps:
       - name: Check Previous Job Status
         id: check
@@ -42,7 +43,7 @@ jobs:
               run.name === 'SHA Validation'
             );
 
-            const ok = { build: false, sonar: false, security: false, package: false };
+            const ok = { build: false, sonar: false, security: false, package: false, deploy: false };
 
             if (previous.length === 0) {
               console.log('No previous runs for this SHA - all jobs will run.');
@@ -114,7 +115,7 @@ jobs:
 
   deploy:
     needs: [check-jobs, build, sonar, security, package]
-    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' }}
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' && needs.check-jobs.outputs.skip_deploy != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy
