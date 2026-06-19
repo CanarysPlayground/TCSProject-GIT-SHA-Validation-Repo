@@ -11,6 +11,8 @@ on:
         options:
           - "true"
           - "false"
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
 
