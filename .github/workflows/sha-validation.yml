@@ -12,7 +12,7 @@ on:
           - "true"
           - "false"
   pull_request:
-    types: [synchronize]
+    types: synchronize
 
 jobs:
 
