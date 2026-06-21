@@ -1,0 +1,135 @@
+name: SHA Validation
+run-name: SHA Validation - ${{ github.event_name }} (${{ github.actor }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      fail_deploy:
+        description: "Simulate Deploy Failure"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+
+  check-jobs:
+    runs-on: ubuntu-latest
+    outputs:
+      skip_build: ${{ steps.check.outputs.skip_build }}
+      skip_sonar: ${{ steps.check.outputs.skip_sonar }}
+      skip_security: ${{ steps.check.outputs.skip_security }}
+      skip_package: ${{ steps.check.outputs.skip_package }}
+      skip_deploy: ${{ steps.check.outputs.skip_deploy }}
+    steps:
+      - name: Check Previous Job Status
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Normalize the commit SHA so manual and PR triggers map to the SAME commit.
+            // pull_request -> github.sha is a temporary MERGE commit, so use the PR head sha.
+            const isPR = context.eventName === 'pull_request';
+            const sha = isPR ? context.payload.pull_request.head.sha : context.sha;
+
+            console.log(`Event: ${context.eventName}`);
+            console.log(`Commit SHA used for dedup: ${sha}`);
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, head_sha: sha }
+            );
+
+            // Same workflow (by name) + same real commit, any trigger type.
+            const previous = runs.filter(run =>
+              run.id !== context.runId &&
+              run.head_sha === sha &&
+              run.name === 'SHA Validation'
+            );
+
+            const ok = { build: false, sonar: false, security: false, package: false, deploy: false };
+
+            if (previous.length === 0) {
+              console.log('No previous runs for this SHA - all jobs will run.');
+            } else {
+              console.log(`Previous runs for this SHA: ${previous.length}`);
+              for (const run of previous) {
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  { owner: context.repo.owner, repo: context.repo.repo, run_id: run.id }
+                );
+                for (const name of Object.keys(ok)) {
+                  if (jobs.some(j => j.name === name && j.conclusion === 'success')) ok[name] = true;
+                }
+              }
+              for (const [name, done] of Object.entries(ok)) {
+                console.log(`${name} previously succeeded: ${done}`);
+              }
+            }
+
+            for (const [name, done] of Object.entries(ok)) {
+              core.setOutput(`skip_${name}`, done ? 'true' : 'false');
+            }
+
+  build:
+    needs: check-jobs
+    if: ${{ needs.check-jobs.outputs.skip_build != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: |
+          echo "Running Build"
+          sleep 10
+          echo "Build Success"
+
+  sonar:
+    needs: [check-jobs, build]
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.check-jobs.outputs.skip_sonar != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sonar Scan
+        run: |
+          echo "Running Sonar Scan"
+          sleep 10
+          echo "Sonar Success"
+
+  security:
+    needs: [check-jobs, sonar]
+    if: ${{ !cancelled() && needs.sonar.result != 'failure' && needs.check-jobs.outputs.skip_security != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Security Scan
+        run: |
+          echo "Running Security Scan"
+          sleep 10
+          echo "Security Success"
+
+  package:
+    needs: [check-jobs, security]
+    if: ${{ !cancelled() && needs.security.result != 'failure' && needs.check-jobs.outputs.skip_package != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Package
+        run: |
+          echo "Packaging Application"
+          sleep 10
+          echo "Package Success"
+
+  deploy:
+    needs: [check-jobs, build, sonar, security, package]
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' && needs.check-jobs.outputs.skip_deploy != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: |
+          echo "Deploying Application"
+          # fail_deploy only exists for manual dispatch; on PR it's empty -> deploy proceeds
+          if [ "${{ github.event.inputs.fail_deploy }}" = "true" ]; then
+            echo "Simulating deployment failure"
+            exit 1
+          fi
+          echo "Deploy Success"
