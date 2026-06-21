@@ -31,20 +31,15 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // Normalize the commit SHA so manual and PR triggers map to the SAME commit.
-            // pull_request -> github.sha is a temporary MERGE commit, so use the PR head sha.
-            const isPR = context.eventName === 'pull_request';
-            const sha = isPR ? context.payload.pull_request.head.sha : context.sha;
-
-            console.log(`Event: ${context.eventName}`);
-            console.log(`Commit SHA used for dedup: ${sha}`);
+            const sha = context.sha;
+            console.log(`Current SHA: ${sha}`);
 
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
               { owner: context.repo.owner, repo: context.repo.repo, head_sha: sha }
             );
 
-            // Same workflow (by name) + same real commit, any trigger type.
+            // keep only real previous runs of THIS workflow on THIS commit
             const previous = runs.filter(run =>
               run.id !== context.runId &&
               run.head_sha === sha &&
@@ -66,11 +61,13 @@ jobs:
                   if (jobs.some(j => j.name === name && j.conclusion === 'success')) ok[name] = true;
                 }
               }
+              // log status only when there are previous runs on the same SHA
               for (const [name, done] of Object.entries(ok)) {
                 console.log(`${name} previously succeeded: ${done}`);
               }
             }
 
+            // outputs must always be set, regardless of SHA
             for (const [name, done] of Object.entries(ok)) {
               core.setOutput(`skip_${name}`, done ? 'true' : 'false');
             }
@@ -127,7 +124,6 @@ jobs:
       - name: Deploy
         run: |
           echo "Deploying Application"
-          # fail_deploy only exists for manual dispatch; on PR it's empty -> deploy proceeds
           if [ "${{ github.event.inputs.fail_deploy }}" = "true" ]; then
             echo "Simulating deployment failure"
             exit 1
