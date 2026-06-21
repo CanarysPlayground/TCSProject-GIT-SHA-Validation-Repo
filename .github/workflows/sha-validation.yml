@@ -12,64 +12,72 @@ on:
         options:
           - "true"
           - "false"
-      force:
-        description: "Force run all jobs (ignore previous success)"
-        required: false
-        default: false
-        type: boolean
   pull_request:
     types: [opened, synchronize, reopened]
-
-permissions:
-  contents: read
-  statuses: write
 
 jobs:
 
   check-jobs:
     runs-on: ubuntu-latest
     outputs:
-      sha: ${{ steps.check.outputs.sha }}
       skip_build: ${{ steps.check.outputs.skip_build }}
       skip_sonar: ${{ steps.check.outputs.skip_sonar }}
       skip_security: ${{ steps.check.outputs.skip_security }}
       skip_package: ${{ steps.check.outputs.skip_package }}
       skip_deploy: ${{ steps.check.outputs.skip_deploy }}
     steps:
-      - name: Check commit statuses for this SHA
+      - name: Check Previous Job Status
         id: check
         uses: actions/github-script@v7
         with:
           script: |
-            // The ONLY thing we key on: the real commit SHA.
-            // pull_request -> github.sha is a merge commit, so use the PR head sha.
-            const sha = context.eventName === 'pull_request'
-              ? context.payload.pull_request.head.sha
-              : context.sha;
+            // Normalize the commit SHA so manual and PR triggers map to the SAME commit.
+            // pull_request -> github.sha is a temporary MERGE commit, so use the PR head sha.
+            const isPR = context.eventName === 'pull_request';
+            const sha = isPR ? context.payload.pull_request.head.sha : context.sha;
 
             console.log(`Event: ${context.eventName}`);
-            console.log(`Real commit SHA: ${sha}`);
-            core.setOutput('sha', sha);
+            console.log(`Commit SHA used for dedup: ${sha}`);
 
-            // Latest status per context, attached to THIS commit.
-            const { data } = await github.rest.repos.getCombinedStatusForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha,
-            });
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, head_sha: sha }
+            );
 
-            const state = {};
-            for (const s of data.statuses) state[s.context] = s.state;
+            // Same workflow (by name) + same real commit, any trigger type.
+            const previous = runs.filter(run =>
+              run.id !== context.runId &&
+              run.head_sha === sha &&
+              run.name === 'SHA Validation'
+            );
 
-            for (const job of ['build', 'sonar', 'security', 'package', 'deploy']) {
-              const done = state[`ci/${job}`] === 'success';
-              console.log(`${job}: ${done ? 'already succeeded on this commit' : 'will run'}`);
-              core.setOutput(`skip_${job}`, done ? 'true' : 'false');
+            const ok = { build: false, sonar: false, security: false, package: false, deploy: false };
+
+            if (previous.length === 0) {
+              console.log('No previous runs for this SHA - all jobs will run.');
+            } else {
+              console.log(`Previous runs for this SHA: ${previous.length}`);
+              for (const run of previous) {
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  { owner: context.repo.owner, repo: context.repo.repo, run_id: run.id }
+                );
+                for (const name of Object.keys(ok)) {
+                  if (jobs.some(j => j.name === name && j.conclusion === 'success')) ok[name] = true;
+                }
+              }
+              for (const [name, done] of Object.entries(ok)) {
+                console.log(`${name} previously succeeded: ${done}`);
+              }
+            }
+
+            for (const [name, done] of Object.entries(ok)) {
+              core.setOutput(`skip_${name}`, done ? 'true' : 'false');
             }
 
   build:
     needs: check-jobs
-    if: ${{ github.event.inputs.force == 'true' || needs.check-jobs.outputs.skip_build != 'true' }}
+    if: ${{ needs.check-jobs.outputs.skip_build != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Build
@@ -77,23 +85,10 @@ jobs:
           echo "Running Build"
           sleep 10
           echo "Build Success"
-      - name: Mark build succeeded
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ needs.check-jobs.outputs.sha }}',
-              state: 'success',
-              context: 'ci/build',
-              description: 'Build completed',
-            });
 
   sonar:
     needs: [check-jobs, build]
-    if: ${{ !cancelled() && needs.build.result != 'failure' && (github.event.inputs.force == 'true' || needs.check-jobs.outputs.skip_sonar != 'true') }}
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.check-jobs.outputs.skip_sonar != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Sonar Scan
@@ -101,23 +96,10 @@ jobs:
           echo "Running Sonar Scan"
           sleep 10
           echo "Sonar Success"
-      - name: Mark sonar succeeded
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ needs.check-jobs.outputs.sha }}',
-              state: 'success',
-              context: 'ci/sonar',
-              description: 'Sonar completed',
-            });
 
   security:
     needs: [check-jobs, sonar]
-    if: ${{ !cancelled() && needs.sonar.result != 'failure' && (github.event.inputs.force == 'true' || needs.check-jobs.outputs.skip_security != 'true') }}
+    if: ${{ !cancelled() && needs.sonar.result != 'failure' && needs.check-jobs.outputs.skip_security != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Security Scan
@@ -125,23 +107,10 @@ jobs:
           echo "Running Security Scan"
           sleep 10
           echo "Security Success"
-      - name: Mark security succeeded
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ needs.check-jobs.outputs.sha }}',
-              state: 'success',
-              context: 'ci/security',
-              description: 'Security completed',
-            });
 
   package:
     needs: [check-jobs, security]
-    if: ${{ !cancelled() && needs.security.result != 'failure' && (github.event.inputs.force == 'true' || needs.check-jobs.outputs.skip_package != 'true') }}
+    if: ${{ !cancelled() && needs.security.result != 'failure' && needs.check-jobs.outputs.skip_package != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Package
@@ -149,23 +118,10 @@ jobs:
           echo "Packaging Application"
           sleep 10
           echo "Package Success"
-      - name: Mark package succeeded
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ needs.check-jobs.outputs.sha }}',
-              state: 'success',
-              context: 'ci/package',
-              description: 'Package completed',
-            });
 
   deploy:
     needs: [check-jobs, build, sonar, security, package]
-    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' && (github.event.inputs.force == 'true' || needs.check-jobs.outputs.skip_deploy != 'true') }}
+    if: ${{ !cancelled() && needs.build.result != 'failure' && needs.sonar.result != 'failure' && needs.security.result != 'failure' && needs.package.result != 'failure' && needs.check-jobs.outputs.skip_deploy != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy
@@ -177,16 +133,3 @@ jobs:
             exit 1
           fi
           echo "Deploy Success"
-      - name: Mark deploy succeeded
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ needs.check-jobs.outputs.sha }}',
-              state: 'success',
-              context: 'ci/deploy',
-              description: 'Deploy completed',
-            });
