@@ -11,8 +11,8 @@ on:
         options:
           - "true"
           - "false"
-  push:
-     branches: [QA]
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
 
