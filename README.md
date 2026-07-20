@@ -2,4 +2,3 @@
 
 Testing new SHA
 
-Adding a new line
